@@ -112,6 +112,10 @@ private:
 		{
 			//Nothing else to do
 		}
+
+		uint32_t getLayer() const {
+			return sprite->layer;
+		}
 	};
 
 	/**
@@ -167,14 +171,14 @@ private:
 		 * @param sprite
 		 */
 		void insertActiveSprite(SpriteStack& spriteStack, const SpriteOnRasterLine& sprite) {
-			uint32_t insertLayer = sprite.sprite->layer;
+			uint32_t insertLayer = sprite.getLayer();
 
 			//Look for the first entry in the spriteStack that has a layer value smaller
 			//than the one we're about to insert
 			auto pos = spriteStack.rbegin();
 			for (; pos != spriteStack.rend(); pos++) {
 				const SpriteOnRasterLine& spr = *pos;
-				if (spr.sprite->layer < insertLayer) {
+				if (spr.getLayer() < insertLayer) {
 					break;
 				}
 			}
