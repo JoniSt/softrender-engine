@@ -304,21 +304,48 @@ private:
 	void distributeSpritesToRasterLines(const vector<Sprite>& sprites) {
 		IntRectangle<int32_t> viewport(0, 0, width, height);
 
+		constexpr int blockSize = 8;
+
+		const int numBlocks = (height + blockSize - 1) / blockSize;
+
+		struct LineBlock {
+			vector<reference_wrapper<const Sprite>> sprites;
+		};
+
+		vector<LineBlock> blocks;
+		blocks.resize(numBlocks);
+
 		for (const Sprite& sprite: sprites) {
 			auto visibleRect = viewport.getIntersection(sprite.position);
 			if (visibleRect.isEmpty()) {
-				//No need to waste processor cycles on an invisible sprite
 				continue;
 			}
 
-			int32_t lastY = visibleRect.getLastY();
-			assert(visibleRect.y >= 0);
-			assert(lastY < height);
+			int32_t firstBlock = visibleRect.y / blockSize;
+			int32_t lastBlock = visibleRect.getLastY() / blockSize;
 
-			assert(visibleRect.x >= 0);
+			for (int32_t i = firstBlock; i <= lastBlock; i++) {
+				blocks[i].sprites.push_back(sprite);
+			}
+		}
 
-			for (int32_t y = visibleRect.y; y <= lastY; y++) {
-				rasterLines[y].addSprite(&sprite, visibleRect.x);
+#pragma omp parallel for schedule(dynamic)
+		for (int i = 0; i < numBlocks; i++) {
+			IntRectangle<int32_t> blockViewport(0, i * blockSize, width, blockSize);
+			blockViewport = blockViewport.getIntersection(viewport);
+
+			for (const Sprite& sprite: blocks[i].sprites) {
+				auto visibleRect = blockViewport.getIntersection(sprite.position);
+				if (visibleRect.isEmpty()) {
+					//No need to waste processor cycles on an invisible sprite
+					continue;
+				}
+
+				int32_t lastY = visibleRect.getLastY();
+
+				for (int32_t y = visibleRect.y; y <= lastY; y++) {
+					rasterLines[y].addSprite(&sprite, visibleRect.x);
+				}
 			}
 		}
 	}
@@ -343,7 +370,7 @@ public:
 		distributeSpritesToRasterLines(sprites);
 
 		//Then render each RasterLine individually and in parallel
-#pragma omp parallel for schedule(dynamic) num_threads(8)
+#pragma omp parallel for schedule(dynamic, 8)
 		for (int y = 0; y < height; y++) {
 			uint8_t *framebufferLine = framebuffer + y * pitch;
 			RasterLine& line = rasterLines[y];
