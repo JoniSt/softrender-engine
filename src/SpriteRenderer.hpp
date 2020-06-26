@@ -370,7 +370,7 @@ public:
 		distributeSpritesToRasterLines(sprites);
 
 		//Then render each RasterLine individually and in parallel
-#pragma omp parallel for schedule(dynamic, 8)
+#pragma omp parallel for schedule(dynamic)
 		for (int y = 0; y < height; y++) {
 			uint8_t *framebufferLine = framebuffer + y * pitch;
 			RasterLine& line = rasterLines[y];
