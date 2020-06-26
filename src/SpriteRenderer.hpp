@@ -117,29 +117,6 @@ private:
 		vector<RasterLinePixel> pixels;
 
 		/**
-		 * Inserts a sprite (that has just been activated) into the given active sprite stack.
-		 *
-		 * @param spriteStack
-		 * @param sprite
-		 */
-		void insertActiveSprite(SpriteStack& spriteStack, const Sprite *sprite) {
-			uint32_t insertLayer = sprite->layer;
-
-			//Look for the first entry in the spriteStack that has a layer value smaller
-			//than the one we're about to insert
-			auto pos = spriteStack.rbegin();
-			for (; pos != spriteStack.rend(); pos++) {
-				const Sprite *spr = *pos;
-				if (spr->layer < insertLayer) {
-					break;
-				}
-			}
-
-			//Then insert the new sprite above the first one that has a smaller layer value.
-			spriteStack.insert(pos.base(), sprite);
-		}
-
-		/**
 		 * Inserts all sprites that get activated (have their first pixel) on the given X coordinate
 		 * into the given active sprite stack.
 		 *
@@ -147,14 +124,69 @@ private:
 		 * @param x
 		 * @return True if any new sprites have been inserted, false if not.
 		 */
-		bool insertAllActivatedSprites(SpriteStack& spriteStack, int x) {
-			const RasterLinePixel& rlPx = pixels[x];
-			bool insertedAny = false;
-			for (size_t i = 0; i < rlPx.beginningSprites.size(); i++) {
-				insertActiveSprite(spriteStack, rlPx.beginningSprites[i]);
-				insertedAny = true;
+		void insertAllActivatedSprites(SpriteStack& spriteStack, int x) {
+			RasterLinePixel& rlPx = pixels[x];
+
+			size_t nSpritesToInsert = rlPx.beginningSprites.size();
+			if (nSpritesToInsert == 0) return;
+
+			//Sort the sprites to insert in ascending order.
+			auto order = [](const Sprite *a, const Sprite *b) {
+				return a->layer < b->layer;
+			};
+			sort(rlPx.beginningSprites.begin(), rlPx.beginningSprites.end(), order);
+
+			//Turns out inplace_merge is slower than this homegrown monstrosity below.
+			//auto middle = spriteStack.insert(spriteStack.end(), rlPx.beginningSprites.begin(), rlPx.beginningSprites.end());
+			//inplace_merge(spriteStack.begin(), middle, spriteStack.end(), order);
+
+
+			//If the stack is empty, just insert the sorted elements directly and be done.
+			//The loop below can't merge into an empty vector.
+			size_t previousSize = spriteStack.size();
+			if (previousSize == 0) {
+				spriteStack.insert(spriteStack.begin(), rlPx.beginningSprites.begin(), rlPx.beginningSprites.end());
+				return;
 			}
-			return insertedAny;
+
+			//Append as many nullptrs to the vector as elements that we need to insert.
+			spriteStack.resize(previousSize + nSpritesToInsert, nullptr);
+
+			//Finally merge the new sprites into the spriteStack.
+			auto previousContentIter = spriteStack.begin() + (previousSize - 1);
+			auto writeIter = spriteStack.end();
+			auto spritesToInsertIter = rlPx.beginningSprites.end() - 1;
+
+			bool startOfSpriteStackReached = false;
+			while (true) {
+				writeIter--;
+				const Sprite *spriteToInsert = *spritesToInsertIter;
+
+				//We can insert directly at the write position if there's either no elements of the previous stack content left,
+				//or if we sort before the largest element of the previous stack content that's still left.
+				bool insertHere = startOfSpriteStackReached || (spriteToInsert->layer > (*previousContentIter)->layer);
+
+				if (insertHere) {
+					//Consume one of the new sprites to merge in.
+					*writeIter = spriteToInsert;
+					if (spritesToInsertIter == rlPx.beginningSprites.begin()) {
+						//We just inserted the last sprite and are now done.
+						break;
+					}
+					spritesToInsertIter--;
+				} else {
+					//Move one of the old sprites forward within the vector.
+					*writeIter = *previousContentIter;
+					*previousContentIter = nullptr;
+					if (previousContentIter == spriteStack.begin()) {
+						//No more old sprites left to move over; from now on, just insert everything.
+						startOfSpriteStackReached = true;
+					} else {
+						previousContentIter--;
+					}
+				}
+			}
+
 		}
 
 		/**

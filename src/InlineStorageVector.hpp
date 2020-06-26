@@ -120,6 +120,18 @@ public:
 	void clear() {
 		storage.template emplace<InlineStorage>();
 	}
+
+	T * begin() {
+		if (InlineStorage * const inlineStorage = get_if<InlineStorage>(&storage)) {
+			return inlineStorage->elems;
+		} else {
+			return get<vector<T>>(storage).data();
+		}
+	}
+
+	T * end() {
+		return begin() + size();
+	}
 };
 
 }
