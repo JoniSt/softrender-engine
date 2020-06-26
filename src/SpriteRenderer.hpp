@@ -89,33 +89,13 @@ private:
 	static_assert(maximumMemoryWastageFactor > minimumExtraMemoryFactor, "maximumMemoryWastageFactor has to be bigger than minimumExtraMemoryFactor");
 
 	/**
-	 * A sprite tagged with information on where it starts and ends on a certain RasterLine.
+	 * A sprite that is already associated with a RasterLine but not
+	 * yet put at the correct X coordinate on that line.
 	 */
-	struct SpriteOnRasterLine {
-		/**
-		 * The sprite in question.
-		 */
+	struct SpriteToDistribute {
 		const Sprite *sprite;
-
-		/**
-		 * The first X position on the line that the sprite might have a pixel on.
-		 */
-		int32_t firstX;
-
-		/**
-		 * The last X position on the line that the sprite might have a pixel on.
-		 */
-		int32_t lastX;
-
-		SpriteOnRasterLine(const Sprite& sprite, int32_t firstX, int32_t lastX):
-			sprite(&sprite), firstX(firstX), lastX(lastX)
-		{
-			//Nothing else to do
-		}
-
-		uint32_t getLayer() const {
-			return sprite->layer;
-		}
+		int32_t xPos;
+		SpriteToDistribute(const Sprite *sprite, int32_t xPos): sprite(sprite), xPos(xPos) {}
 	};
 
 	/**
@@ -126,7 +106,7 @@ private:
 		 * All sprites that begin on this exact pixel.
 		 * Must be a pointer because reference_wrapper can't be default-constructed.
 		 */
-		InlineStorageVector<const SpriteOnRasterLine *, numInlineSpritesPerPixel> beginningSprites;
+		InlineStorageVector<const Sprite *, numInlineSpritesPerPixel> beginningSprites;
 
 		inline void clear() {
 			beginningSprites.clear();
@@ -139,7 +119,7 @@ private:
 	class RasterLine {
 	private:
 		//using SpriteStack = vector<reference_wrapper<const SpriteOnRasterLine>>;
-		using SpriteStack = vector<SpriteOnRasterLine>;
+		using SpriteStack = vector<const Sprite *>;
 
 		/**
 		 * The pixels on this RasterLine. Each one contains a (custom) vector
@@ -151,16 +131,16 @@ private:
 		/**
 		 * Contains all sprites that might have visible pixels on this RasterLine.
 		 */
-		vector<SpriteOnRasterLine> spritesOnThisLine;
+		vector<SpriteToDistribute> spritesOnThisLine;
 
 		/**
 		 * Takes all sprites on this line and stores them in the first RasterLinePixel
 		 * they touch.
 		 */
 		void distributeSpritesToPixels() {
-			for (const SpriteOnRasterLine& sprite: spritesOnThisLine) {
-				const SpriteOnRasterLine *spr = &sprite;
-				pixels[sprite.firstX].beginningSprites.put(spr);
+			for (const SpriteToDistribute& spriteToDistribute: spritesOnThisLine) {
+				const Sprite *spr = spriteToDistribute.sprite;
+				pixels[spriteToDistribute.xPos].beginningSprites.put(spr);
 			}
 		}
 
@@ -170,15 +150,15 @@ private:
 		 * @param spriteStack
 		 * @param sprite
 		 */
-		void insertActiveSprite(SpriteStack& spriteStack, const SpriteOnRasterLine& sprite) {
-			uint32_t insertLayer = sprite.getLayer();
+		void insertActiveSprite(SpriteStack& spriteStack, const Sprite *sprite) {
+			uint32_t insertLayer = sprite->layer;
 
 			//Look for the first entry in the spriteStack that has a layer value smaller
 			//than the one we're about to insert
 			auto pos = spriteStack.rbegin();
 			for (; pos != spriteStack.rend(); pos++) {
-				const SpriteOnRasterLine& spr = *pos;
-				if (spr.getLayer() < insertLayer) {
+				const Sprite *spr = *pos;
+				if (spr->layer < insertLayer) {
 					break;
 				}
 			}
@@ -199,7 +179,7 @@ private:
 			const RasterLinePixel& rlPx = pixels[x];
 			bool insertedAny = false;
 			for (size_t i = 0; i < rlPx.beginningSprites.size(); i++) {
-				insertActiveSprite(spriteStack, *rlPx.beginningSprites[i]);
+				insertActiveSprite(spriteStack, rlPx.beginningSprites[i]);
 				insertedAny = true;
 			}
 			return insertedAny;
@@ -217,7 +197,7 @@ private:
 					remove_if(
 							spriteStack.begin(),
 							spriteStack.end(),
-							[=](const SpriteOnRasterLine& sprite) {return x > sprite.lastX;}),
+							[=](const Sprite *sprite) {return x > sprite->position.getLastX();}),
 					spriteStack.end());
 		}
 
@@ -234,8 +214,8 @@ private:
 			renderPixelRetry:
 
 			for (auto sprIt = spriteStack.rbegin(); sprIt != spriteStack.rend(); sprIt++) {
-				const SpriteOnRasterLine& spr = *sprIt;
-				if (spr.lastX < x) {
+				const Sprite *spr = *sprIt;
+				if (spr->position.getLastX() < x) {
 					//Oops, we found an inactive sprite. Remove it and then retry the renderPixel operation.
 					if (sprIt == spriteStack.rbegin()) {
 						//Avoid iterating through the entire sprite stack if the topmost
@@ -253,9 +233,8 @@ private:
 				}
 
 				//If the sprite has a pixel for us, return that.
-				const Sprite *sprite = spr.sprite;
-				const IntRectangle<int32_t>& spritePos = sprite->position;
-				SpritePixel pix = sprite->pixelGetter(x - spritePos.x, y - spritePos.y);
+				const IntRectangle<int32_t>& spritePos = spr->position;
+				SpritePixel pix = spr->pixelGetter(x - spritePos.x, y - spritePos.y);
 				if (!pix.isTransparent) {
 					return pix;
 				}
@@ -280,8 +259,8 @@ private:
 		 *
 		 * @param sprite
 		 */
-		void addSprite(const SpriteOnRasterLine& sprite) {
-			spritesOnThisLine.push_back(sprite);
+		void addSprite(const Sprite *sprite, int32_t firstX) {
+			spritesOnThisLine.emplace_back(sprite, firstX);
 		}
 
 		/**
@@ -303,7 +282,7 @@ private:
 			if (max(spriteCount * maximumMemoryWastageFactor, minimumSpriteVectorCapacityPerLine) < spritesOnThisLine.capacity()) {
 				//We're being too wasteful with memory, give some back to the system by
 				//creating a new vector.
-				spritesOnThisLine = vector<SpriteOnRasterLine>();
+				spritesOnThisLine = vector<SpriteToDistribute>();
 				spritesOnThisLine.reserve(spriteCount * minimumExtraMemoryFactor);
 			}
 			clear();
@@ -369,19 +348,10 @@ private:
 			assert(visibleRect.y >= 0);
 			assert(lastY < height);
 
-			int32_t lastX = visibleRect.getLastX();
 			assert(visibleRect.x >= 0);
-			assert(lastX < width);
-
-			/*cout << "x=" << visibleRect.x;
-			cout << " lastX=" << lastX;
-			cout << " y=" << visibleRect.y;
-			cout << " lastY=" << lastY;
-			cout << endl;*/
 
 			for (int32_t y = visibleRect.y; y <= lastY; y++) {
-				SpriteOnRasterLine spriteOnRasterLine(sprite, visibleRect.x, lastX);
-				rasterLines[y].addSprite(spriteOnRasterLine);
+				rasterLines[y].addSprite(&sprite, visibleRect.x);
 			}
 		}
 	}
