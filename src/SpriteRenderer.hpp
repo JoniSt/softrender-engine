@@ -129,22 +129,6 @@ private:
 		vector<RasterLinePixel> pixels;
 
 		/**
-		 * Contains all sprites that might have visible pixels on this RasterLine.
-		 */
-		vector<SpriteToDistribute> spritesOnThisLine;
-
-		/**
-		 * Takes all sprites on this line and stores them in the first RasterLinePixel
-		 * they touch.
-		 */
-		void distributeSpritesToPixels() {
-			for (const SpriteToDistribute& spriteToDistribute: spritesOnThisLine) {
-				const Sprite *spr = spriteToDistribute.sprite;
-				pixels[spriteToDistribute.xPos].beginningSprites.put(spr);
-			}
-		}
-
-		/**
 		 * Inserts a sprite (that has just been activated) into the given active sprite stack.
 		 *
 		 * @param spriteStack
@@ -260,7 +244,7 @@ private:
 		 * @param sprite
 		 */
 		void addSprite(const Sprite *sprite, int32_t firstX) {
-			spritesOnThisLine.emplace_back(sprite, firstX);
+			pixels[firstX].beginningSprites.put(sprite);
 		}
 
 		/**
@@ -270,22 +254,6 @@ private:
 			for (RasterLinePixel& pixel: pixels) {
 				pixel.clear();
 			}
-			spritesOnThisLine.clear();
-		}
-
-		/**
-		 * Removes all Sprites from this RasterLine.
-		 * If this RasterLine currently wastes too much memory, returns some to the system.
-		 */
-		void clearAndEliminateWastedMemory() {
-			size_t spriteCount = spritesOnThisLine.size();
-			if (max(spriteCount * maximumMemoryWastageFactor, minimumSpriteVectorCapacityPerLine) < spritesOnThisLine.capacity()) {
-				//We're being too wasteful with memory, give some back to the system by
-				//creating a new vector.
-				spritesOnThisLine = vector<SpriteToDistribute>();
-				spritesOnThisLine.reserve(spriteCount * minimumExtraMemoryFactor);
-			}
-			clear();
 		}
 
 		/**
@@ -296,7 +264,6 @@ private:
 		 * @param pixelPacker
 		 */
 		void render(uint32_t *targetPixels, int y, PixelPacker *pixelPacker) {
-			distributeSpritesToPixels();
 
 			//The stack of currently active sprites, sorted so that the topmost sprite
 			//(the one with the largest Z coordinate) is last.
@@ -384,7 +351,7 @@ public:
 
 			//Invariant: All the RasterLines are empty when entering this method.
 			//Therefore we have to empty each line again when we're done with it.
-			line.clearAndEliminateWastedMemory();
+			line.clear();
 		}
 	}
 
