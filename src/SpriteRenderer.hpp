@@ -14,6 +14,7 @@
 #include <variant>
 #include <functional>
 #include <algorithm>
+#include <list>
 
 #include "InlineStorageVector.hpp"
 #include "IntRectangle.hpp"
@@ -94,7 +95,7 @@ private:
 		 * All sprites that begin on this exact pixel.
 		 * Must be a pointer because reference_wrapper can't be default-constructed.
 		 */
-		InlineStorageVector<const Sprite *, numInlineSpritesPerPixel> beginningSprites;
+		list<const Sprite *> beginningSprites;
 
 		inline void clear() {
 			beginningSprites.clear();
@@ -107,7 +108,12 @@ private:
 	class RasterLine {
 	private:
 		//using SpriteStack = vector<reference_wrapper<const SpriteOnRasterLine>>;
-		using SpriteStack = vector<const Sprite *>;
+
+		/**
+		 * A stack of currently visible sprites.
+		 * The sprite with the highest layer value is at the front.
+		 */
+		using SpriteStack = list<const Sprite *>;
 
 		/**
 		 * The pixels on this RasterLine. Each one contains a (custom) vector
@@ -116,28 +122,6 @@ private:
 		 */
 		vector<RasterLinePixel> pixels;
 
-		/**
-		 * Inserts a sprite (that has just been activated) into the given active sprite stack.
-		 *
-		 * @param spriteStack
-		 * @param sprite
-		 */
-		void insertActiveSprite(SpriteStack& spriteStack, const Sprite *sprite) {
-			uint32_t insertLayer = sprite->layer;
-
-			//Look for the first entry in the spriteStack that has a layer value smaller
-			//than the one we're about to insert
-			auto pos = spriteStack.rbegin();
-			for (; pos != spriteStack.rend(); pos++) {
-				const Sprite *spr = *pos;
-				if (spr->layer < insertLayer) {
-					break;
-				}
-			}
-
-			//Then insert the new sprite above the first one that has a smaller layer value.
-			spriteStack.insert(pos.base(), sprite);
-		}
 
 		/**
 		 * Inserts all sprites that get activated (have their first pixel) on the given X coordinate
@@ -145,32 +129,16 @@ private:
 		 *
 		 * @param spriteStack
 		 * @param x
-		 * @return True if any new sprites have been inserted, false if not.
 		 */
-		bool insertAllActivatedSprites(SpriteStack& spriteStack, int x) {
-			const RasterLinePixel& rlPx = pixels[x];
-			bool insertedAny = false;
-			for (size_t i = 0; i < rlPx.beginningSprites.size(); i++) {
-				insertActiveSprite(spriteStack, rlPx.beginningSprites[i]);
-				insertedAny = true;
-			}
-			return insertedAny;
-		}
+		void insertAllActivatedSprites(SpriteStack& spriteStack, int x) {
+			RasterLinePixel& rlPx = pixels[x];
 
-		/**
-		 * Removes all inactive sprites from the given sprite stack. That is,
-		 * it removes all sprites that the given X coordinate is past of already.
-		 *
-		 * @param spriteStack
-		 * @param x
-		 */
-		void removeInactiveSpritesFromSpriteStack(SpriteStack& spriteStack, int x) {
-			spriteStack.erase(
-					remove_if(
-							spriteStack.begin(),
-							spriteStack.end(),
-							[=](const Sprite *sprite) {return x > sprite->position.getLastX();}),
-					spriteStack.end());
+			auto order = [](const Sprite *a, const Sprite *b) {
+				return a->layer > b->layer;
+			};
+
+			rlPx.beginningSprites.sort(order);
+			spriteStack.merge(rlPx.beginningSprites, order);
 		}
 
 		/**
@@ -183,25 +151,12 @@ private:
 		 * @return            The pixel. May be transparent if there is no opaque sprite at the given coordinates.
 		 */
 		SpritePixel renderPixel(SpriteStack& spriteStack, int x, int y) {
-			renderPixelRetry:
-
-			for (auto sprIt = spriteStack.rbegin(); sprIt != spriteStack.rend(); sprIt++) {
+			for (auto sprIt = spriteStack.begin(); sprIt != spriteStack.end();) {
 				const Sprite *spr = *sprIt;
 				if (spr->position.getLastX() < x) {
-					//Oops, we found an inactive sprite. Remove it and then retry the renderPixel operation.
-					if (sprIt == spriteStack.rbegin()) {
-						//Avoid iterating through the entire sprite stack if the topmost
-						//sprite is inactive.
-						spriteStack.pop_back();
-					} else {
-						//Something in the middle of the sprite stack is inactive,
-						//remove everything we can since we have to iterate over it anyway.
-						removeInactiveSpritesFromSpriteStack(spriteStack, x);
-					}
-					//We need to re-run the entire renderPixel function because our iterators
-					//just got invalidated, breaking this for loop if we would continue.
-					//Please don't hate me for the goto.
-					goto renderPixelRetry;
+					//Remove any sprites that we already went past of.
+					sprIt = spriteStack.erase(sprIt);
+					continue;
 				}
 
 				//If the sprite has a pixel for us, return that.
@@ -210,6 +165,8 @@ private:
 				if (!pix.isTransparent) {
 					return pix;
 				}
+
+				sprIt++;
 			}
 
 			return SpritePixel();
@@ -232,7 +189,7 @@ private:
 		 * @param sprite
 		 */
 		void addSprite(const Sprite *sprite, int32_t firstX) {
-			pixels[firstX].beginningSprites.put(sprite);
+			pixels[firstX].beginningSprites.push_back(sprite);
 		}
 
 		/**
@@ -322,7 +279,7 @@ private:
 
 		//Then put the sprites from each block into the appropriate RasterLines.
 		//We can do this for each block in parallel.
-#pragma omp parallel for schedule(dynamic)
+//#pragma omp parallel for schedule(dynamic)
 		for (int i = 0; i < numBlocks; i++) {
 			IntRectangle<int32_t> blockViewport(0, i * blockSize, width, blockSize);
 			blockViewport = blockViewport.getIntersection(viewport);
@@ -363,7 +320,7 @@ public:
 		distributeSpritesToRasterLines(sprites);
 
 		//Then render each RasterLine individually and in parallel
-#pragma omp parallel for schedule(dynamic)
+//#pragma omp parallel for schedule(dynamic)
 		for (int y = 0; y < height; y++) {
 			uint8_t *framebufferLine = framebuffer + y * pitch;
 			RasterLine& line = rasterLines[y];
