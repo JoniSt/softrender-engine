@@ -85,15 +85,6 @@ using PixelPacker = uint32_t(uint8_t r, uint8_t g, uint8_t b);
 template<size_t numInlineSpritesPerPixel = 4>
 class SpriteRenderer {
 private:
-	/**
-	 * A sprite that is already associated with a RasterLine but not
-	 * yet put at the correct X coordinate on that line.
-	 */
-	struct SpriteToDistribute {
-		const Sprite *sprite;
-		int32_t xPos;
-		SpriteToDistribute(const Sprite *sprite, int32_t xPos): sprite(sprite), xPos(xPos) {}
-	};
 
 	/**
 	 * One pixel on a RasterLine.
