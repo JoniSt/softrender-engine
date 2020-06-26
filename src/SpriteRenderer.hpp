@@ -82,12 +82,9 @@ struct Sprite {
  */
 using PixelPacker = uint32_t(uint8_t r, uint8_t g, uint8_t b);
 
-template<unsigned minimumExtraMemoryFactor = 2, unsigned maximumMemoryWastageFactor = 4, size_t numInlineSpritesPerPixel = 4, size_t minimumSpriteVectorCapacityPerLine = 128>
+template<size_t numInlineSpritesPerPixel = 4>
 class SpriteRenderer {
 private:
-	static_assert(maximumMemoryWastageFactor > 2, "maximumMemoryWastageFactor has to be at least 2");
-	static_assert(maximumMemoryWastageFactor > minimumExtraMemoryFactor, "maximumMemoryWastageFactor has to be bigger than minimumExtraMemoryFactor");
-
 	/**
 	 * A sprite that is already associated with a RasterLine but not
 	 * yet put at the correct X coordinate on that line.
