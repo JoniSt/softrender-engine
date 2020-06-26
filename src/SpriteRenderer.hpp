@@ -294,6 +294,8 @@ private:
 
 		constexpr int blockSize = 8;
 
+		//First sort the incoming sprites into horizontal stripes of blockSize lines.
+		//Each of those lines is a "block".
 		const int numBlocks = (height + blockSize - 1) / blockSize;
 
 		struct LineBlock {
@@ -317,6 +319,9 @@ private:
 			}
 		}
 
+
+		//Then put the sprites from each block into the appropriate RasterLines.
+		//We can do this for each block in parallel.
 #pragma omp parallel for schedule(dynamic)
 		for (int i = 0; i < numBlocks; i++) {
 			IntRectangle<int32_t> blockViewport(0, i * blockSize, width, blockSize);
