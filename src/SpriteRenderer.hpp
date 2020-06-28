@@ -58,7 +58,8 @@ struct SpritePixel {
 /**
  * A sprite to draw to the screen.
  */
-struct Sprite {
+class Sprite {
+public:
 	/**
 	 * Given relative coordinates into the sprite, returns
 	 * the pixel at those coordinates.
@@ -314,30 +315,37 @@ private:
 	 */
 	PixelPacker *pixelPacker;
 
+	/**
+	 * Contains all sprites that are visible on a group of RasterLines to make
+	 * distribution of sprites to RasterLines parallelizable
+	 */
+	struct LineBlock {
+		vector<const Sprite *> sprites;
+	};
+	vector<LineBlock> lineBlocks;
+	static constexpr int blockSize = 8;
+	int numBlocks;
 
 	/**
-	 * Takes the given Sprites and associates them with the RasterLines they
+	 * @return The current viewport of this renderer into the scene.
+	 */
+	IntRectangle<int32_t> getViewport() {
+		return IntRectangle<int32_t>(0, 0, width, height);
+	}
+
+	/**
+	 * Takes the given Sprites and associates them with the LineBlocks they
 	 * might be visible in.
 	 *
 	 * @param sprites
 	 */
-	void distributeSpritesToRasterLines(const vector<Sprite>& sprites) {
-		IntRectangle<int32_t> viewport(0, 0, width, height);
+	template<class SpriteType>
+	void distributeSpritesToLineBlocks(const vector<SpriteType>& sprites) {
+		IntRectangle<int32_t> viewport = getViewport();
+		//Sort the incoming sprites into horizontal stripes of blockSize lines.
+		//Each of those strips is a "block".
 
-		constexpr int blockSize = 8;
-
-		//First sort the incoming sprites into horizontal stripes of blockSize lines.
-		//Each of those lines is a "block".
-		const int numBlocks = (height + blockSize - 1) / blockSize;
-
-		struct LineBlock {
-			vector<reference_wrapper<const Sprite>> sprites;
-		};
-
-		vector<LineBlock> blocks;
-		blocks.resize(numBlocks);
-
-		for (const Sprite& sprite: sprites) {
+		for (const SpriteType& sprite: sprites) {
 			auto visibleRect = viewport.getIntersection(sprite.position);
 			if (visibleRect.isEmpty()) {
 				continue;
@@ -347,10 +355,21 @@ private:
 			int32_t lastBlock = visibleRect.getLastY() / blockSize;
 
 			for (int32_t i = firstBlock; i <= lastBlock; i++) {
-				blocks[i].sprites.push_back(sprite);
+				lineBlocks[i].sprites.push_back(&sprite);
 			}
 		}
+	}
 
+	/**
+	 * Takes all sprites from all LineBlocks and distributes them to the RasterLines
+	 * they might be visible in.
+	 *
+	 * Clears the LineBlocks.
+	 *
+	 * @param sprites
+	 */
+	void distributeSpritesToRasterLines() {
+		IntRectangle<int32_t> viewport = getViewport();
 
 		//Then put the sprites from each block into the appropriate RasterLines.
 		//We can do this for each block in parallel.
@@ -359,8 +378,8 @@ private:
 			IntRectangle<int32_t> blockViewport(0, i * blockSize, width, blockSize);
 			blockViewport = blockViewport.getIntersection(viewport);
 
-			for (const Sprite& sprite: blocks[i].sprites) {
-				auto visibleRect = blockViewport.getIntersection(sprite.position);
+			for (const Sprite *sprite: lineBlocks[i].sprites) {
+				auto visibleRect = blockViewport.getIntersection(sprite->position);
 				if (visibleRect.isEmpty()) {
 					//No need to waste processor cycles on an invisible sprite
 					continue;
@@ -369,9 +388,12 @@ private:
 				int32_t lastY = visibleRect.getLastY();
 
 				for (int32_t y = visibleRect.y; y <= lastY; y++) {
-					rasterLines[y].addSprite(&sprite, visibleRect.x);
+					rasterLines[y].addSprite(sprite, visibleRect.x);
 				}
 			}
+
+			lineBlocks[i].sprites.clear();
+			lineBlocks[i].sprites.shrink_to_fit();
 		}
 	}
 
@@ -387,12 +409,30 @@ public:
 	{
 		//Argument order is not a typo: We want height RasterLines with width pixels each.
 		rasterLines.resize(height, width);
+		numBlocks = (height + blockSize - 1) / blockSize;
+		lineBlocks.resize(numBlocks);
 	}
 
+	/**
+	 * Puts the given sprites into this SpriteRenderer to be rendered in the next render() call.
+	 * Each unique sprite may only be added once.
+	 *
+	 * @param sprites
+	 */
+	template<class SpriteType>
+	void addSprites(const vector<SpriteType>& sprites) {
+		distributeSpritesToLineBlocks(sprites);
+	}
 
-	void render(const vector<Sprite>& sprites, uint8_t *framebuffer, size_t pitch) {
+	/**
+	 * Renders all sprites that have been previously added to this SpriteRenderer.
+	 *
+	 * @param framebuffer
+	 * @param pitch
+	 */
+	void render(uint8_t *framebuffer, size_t pitch) {
 		//First distribute the sprites to the RasterLines that make up the framebuffer
-		distributeSpritesToRasterLines(sprites);
+		distributeSpritesToRasterLines();
 
 		//Then render each RasterLine individually and in parallel
 #pragma omp parallel for schedule(dynamic)

@@ -29,8 +29,8 @@ constexpr int windowHeight = 900;
 
 constexpr int fpsReportIntervalMsec = 5000;
 
-constexpr int numTestSprites = 2000;
-constexpr int maxTestSpriteSize = 700;
+//constexpr int numTestSprites = 2000;
+//constexpr int maxTestSpriteSize = 700;
 
 /**
  * Pixel format to use for sending frames to SDL.
@@ -79,7 +79,7 @@ bool handleEvents() {
 
 
 
-vector<Sprite> makeTestSprites() {
+/*vector<Sprite> makeTestSprites() {
 	mt19937 gen;
 	uniform_int_distribution<> sizeDistrib(1, maxTestSpriteSize);
 	uniform_int_distribution<> xDistrib(0, windowWidth);
@@ -105,7 +105,92 @@ vector<Sprite> makeTestSprites() {
 	}
 
 	return sprites;
+}*/
+
+
+
+constexpr uint32_t backgroundSpriteSize = 32;
+constexpr int numForegroundSprites = 1000;
+constexpr uint32_t foregroundSpriteSize = 16;
+constexpr int maxSpriteSpeed = 3;
+
+vector<Sprite> makeBackgroundSprites(uint32_t& layer) {
+	vector<Sprite> sprites;
+
+	for (int32_t sprX = 0; sprX < windowWidth; sprX += backgroundSpriteSize) {
+		for (int32_t sprY = 0; sprY < windowHeight; sprY += backgroundSpriteSize) {
+			Sprite::PixelGetter pixelGetter = [=](int x, int y) {return SpritePixel(sprX % 256, sprY % 256, 0);};
+			IntRectangle<int32_t> position(sprX, sprY, backgroundSpriteSize, backgroundSpriteSize);
+			sprites.emplace_back(position, pixelGetter, layer);
+			layer++;
+		}
+	}
+
+	return sprites;
 }
+
+class BouncingSprite: public Sprite {
+private:
+	IntRectangle<int32_t> bounds;
+
+public:
+	int32_t xSpeed = 0, ySpeed = 0;
+	BouncingSprite(IntRectangle<int32_t> position, PixelGetter pixelGetter, uint32_t layer, IntRectangle<int32_t>& bounds):
+		Sprite(position, pixelGetter, layer), bounds(bounds)
+	{
+
+	}
+
+	void tick() {
+		if (bounds.x > position.x) {
+			xSpeed = abs(xSpeed);
+		}
+		if (bounds.getLastX() < position.getLastX()) {
+			xSpeed = -abs(xSpeed);
+		}
+		if (bounds.y > position.y) {
+			ySpeed = abs(ySpeed);
+		}
+		if (bounds.getLastY() < position.getLastY()) {
+			ySpeed = -abs(ySpeed);
+		}
+
+		position.x += xSpeed;
+		position.y += ySpeed;
+	}
+};
+
+vector<BouncingSprite> makeForegroundSprites(uint32_t& layer) {
+	mt19937 gen;
+	uniform_int_distribution<> xDistrib(0, windowWidth - foregroundSpriteSize + 1);
+	uniform_int_distribution<> yDistrib(0, windowHeight - foregroundSpriteSize + 1);
+	uniform_int_distribution<> speedDistrib(-maxSpriteSpeed, maxSpriteSpeed);
+
+	vector<BouncingSprite> sprites;
+	IntRectangle<int32_t> bounds(0, 0, windowWidth, windowHeight);
+
+	for (int i = 0; i < numForegroundSprites; i++) {
+		int x = xDistrib(gen);
+		int y = yDistrib(gen);
+
+		Sprite::PixelGetter pixelGetter;
+		if (i % 2) {
+			pixelGetter = [=](int x, int y) {return SpritePixel(x * 256 / foregroundSpriteSize, y * 256 / foregroundSpriteSize, 0);};
+		} else {
+			pixelGetter = [=](int x, int y) {return SpritePixel(x * 256 / foregroundSpriteSize, 0, y * 256 / foregroundSpriteSize);};
+		}
+
+		IntRectangle<int32_t> position(x, y, foregroundSpriteSize, foregroundSpriteSize);
+		sprites.emplace_back(position, pixelGetter, layer, bounds);
+		BouncingSprite& spr = sprites.back();
+		spr.xSpeed = speedDistrib(gen);
+		spr.ySpeed = speedDistrib(gen);
+		layer++;
+	}
+
+	return sprites;
+}
+
 
 
 int main(int argc, char *argv[]) {
@@ -117,9 +202,11 @@ int main(int argc, char *argv[]) {
 	uint32_t frameCount = 0;
 	unique_ptr<SpriteRenderer<>> mmoRenderer;
 
-	vector<Sprite> sprites = makeTestSprites();
-	cout << "Got " << sprites.size() << " sprites" << endl;
-
+	uint32_t currentLayer = 0;
+	vector<Sprite> backgroundSprites = makeBackgroundSprites(currentLayer);
+	cout << "Got " << backgroundSprites.size() << " background sprites" << endl;
+	vector<BouncingSprite> foregroundSprites = makeForegroundSprites(currentLayer);
+	cout << "Got " << foregroundSprites.size() << " foreground sprites" << endl;
 
 
 	if (SDL_Init(SDL_INIT_VIDEO)) {
@@ -188,14 +275,12 @@ int main(int argc, char *argv[]) {
 		}
 
 		//TODO: Actually render stuff?
-		for (Sprite& sprite: sprites) {
-			auto& pos = sprite.position;
-			pos.x++;
-			pos.y++;
-			if (pos.x > windowWidth) pos.x = 0;
-			if (pos.y > windowHeight) pos.y = 0;
+		for (BouncingSprite& bs: foregroundSprites) {
+			bs.tick();
 		}
-		mmoRenderer->render(sprites, (uint8_t *)pixels, pitch);
+		mmoRenderer->addSprites(backgroundSprites);
+		mmoRenderer->addSprites(foregroundSprites);
+		mmoRenderer->render((uint8_t *)pixels, pitch);
 
 		SDL_UnlockTexture(sdlTexture);
 
