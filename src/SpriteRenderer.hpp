@@ -15,11 +15,13 @@
 #include <functional>
 #include <algorithm>
 
-#include "InlineStorageVector.hpp"
+#include <boost/container/small_vector.hpp>
+
 #include "IntRectangle.hpp"
 
 using namespace std;
 using namespace ttlhacker;
+using boost::container::small_vector;
 
 namespace mmo2020 {
 
@@ -83,7 +85,7 @@ public:
  */
 using PixelPacker = uint32_t(uint8_t r, uint8_t g, uint8_t b);
 
-template<size_t numInlineSpritesPerPixel = 4>
+template<size_t numInlineSpritesPerPixel = 2>
 class SpriteRenderer {
 private:
 
@@ -95,7 +97,7 @@ private:
 		 * All sprites that begin on this exact pixel.
 		 * Must be a pointer because reference_wrapper can't be default-constructed.
 		 */
-		InlineStorageVector<const Sprite *, numInlineSpritesPerPixel> beginningSprites;
+		small_vector<const Sprite *, numInlineSpritesPerPixel> beginningSprites;
 
 		inline void clear() {
 			beginningSprites.clear();
@@ -265,7 +267,7 @@ private:
 		 * @param sprite
 		 */
 		void addSprite(const Sprite *sprite, int32_t firstX) {
-			pixels[firstX].beginningSprites.put(sprite);
+			pixels[firstX].beginningSprites.push_back(sprite);
 		}
 
 		/**
